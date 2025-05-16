@@ -14,10 +14,19 @@ fn main() -> Result<()> {
     let db_path = &args[1];
     let command = &args[2];
 
-    match command.as_str() {
-        ".dbinfo" => handle_dbinfo(db_path),
-        ".tables" => handle_tables(db_path),
-        _ => bail!("Unsupported command: {}", command),
+    if command.to_lowercase().starts_with("select count(*) from") {
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        if parts.len() < 4 {
+            bail!("Invalid SELECT COUNT command format");
+        }
+        let table_name = parts[parts.len() - 1];
+        handle_count(db_path, table_name)
+    } else {
+        match command.as_str() {
+            ".dbinfo" => handle_dbinfo(db_path),
+            ".tables" => handle_tables(db_path),
+            _ => bail!("Unsupported command: {}", command),
+        }
     }
 }
 
@@ -54,9 +63,30 @@ fn handle_tables(db_path: &str) -> Result<()> {
     Ok(())
 }
 
+fn handle_count(db_path: &str, table_name: &str) -> Result<()> {
+    let mut db = Database::open(db_path)?;
+    let schema = db.read_schema()?;
+
+    let entry = schema
+        .iter()
+        .find(|e| e.typ == "table" && e.tbl_name == table_name)
+        .context(format!("Table '{}' not found", table_name))?;
+
+    let page_data = db.read_page(entry.rootpage as usize)?;
+
+    let header_offset = if entry.rootpage == 1 { 100 } else { 0 };
+
+    let cell_count =
+        u16::from_be_bytes([page_data[header_offset + 3], page_data[header_offset + 4]]) as usize;
+
+    println!("{}", cell_count);
+    Ok(())
+}
+
 struct SchemaEntry {
     typ: String,
     tbl_name: String,
+    rootpage: u32,
 }
 
 struct Database {
@@ -114,18 +144,26 @@ impl Database {
                 } else {
                     continue;
                 };
+                let rootpage = if let Value::Int(r) = record[3] {
+                    r as u32
+                } else {
+                    continue;
+                };
 
-                schema_entries.push(SchemaEntry { typ, tbl_name });
+                schema_entries.push(SchemaEntry {
+                    typ,
+                    tbl_name,
+                    rootpage,
+                });
             }
         }
 
         Ok(schema_entries)
     }
 
-    #[allow(dead_code)]
     fn read_page(&mut self, page_number: usize) -> Result<Vec<u8>> {
         let mut page_data = vec![0; self.page_size];
-        let offset = page_number * self.page_size;
+        let offset = (page_number - 1) * self.page_size;
 
         self.file.seek(SeekFrom::Start(offset as u64))?;
         self.file.read_exact(&mut page_data)?;
