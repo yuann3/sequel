@@ -2,6 +2,8 @@ mod database;
 mod parser;
 mod record;
 
+use std::usize;
+
 use anyhow::{bail, Context, Result};
 use database::Database;
 use parser::{parse_query, QueryType};
@@ -24,14 +26,14 @@ fn main() -> Result<()> {
         }
     } else {
         match parse_query(command)? {
-            QueryType::Select { column, table } => handle_select(db_path, &column, &table),
+            QueryType::Select { columns, table } => handle_select(db_path, &columns, &table),
             QueryType::SelectCount { table } => handle_count(db_path, &table),
             _ => bail!("Unsupported SQL command: {}", command),
         }
     }
 }
 
-fn handle_select(db_path: &str, column_name: &str, table_name: &str) -> Result<()> {
+fn handle_select(db_path: &str, column_names: &[String], table_name: &str) -> Result<()> {
     let mut db = Database::open(db_path)?;
 
     let schema = db.read_schema()?;
@@ -41,18 +43,27 @@ fn handle_select(db_path: &str, column_name: &str, table_name: &str) -> Result<(
         .find(|e| e.typ == "table" && e.tbl_name == table_name)
         .context(format!("Table '{}' not found", table_name))?;
 
-    let column_index = get_column_index(&mut db, table_entry, column_name)?;
+    let column_indices = column_names
+        .iter()
+        .map(|col| get_column_index(&mut db, table_entry, col))
+        .collect::<Result<Vec<usize>>>()?;
 
     let records = db.read_table_records(table_entry.rootpage as usize)?;
 
     for record in records {
-        if column_index < record.len() {
-            if let record::Value::Text(value) = &record[column_index] {
-                println!("{}", value);
-            } else if let record::Value::Int(value) = record[column_index] {
-                println!("{}", value);
+        let mut values = Vec::new();
+
+        for &index in &column_indices {
+            if index < record.len() {
+                match &record[index] {
+                    record::Value::Text(value) => values.push(value.clone()),
+                    record::Value::Int(value) => values.push(value.to_string()),
+                    _ => {}
+                }
             }
         }
+
+        println!("{}", values.join("|"));
     }
 
     Ok(())
