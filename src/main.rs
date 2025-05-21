@@ -89,7 +89,7 @@ fn handle_select(
         .map(|req_col_name| {
             all_table_column_names
                 .iter()
-                .position(|name| name.eq_ignore_ascii_case(req_col_name)) // Case-insensitive column name matching
+                .position(|name| name.eq_ignore_ascii_case(req_col_name))
                 .context(format!(
                     "Column '{}' not found in table '{}'",
                     req_col_name, table_name
@@ -102,7 +102,7 @@ fn handle_select(
     let filtered_records = if let Some(condition) = where_clause {
         let condition_column_index = all_table_column_names
             .iter()
-            .position(|name| name.eq_ignore_ascii_case(&condition.column)) // Case-insensitive
+            .position(|name| name.eq_ignore_ascii_case(&condition.column))
             .context(format!(
                 "WHERE clause column '{}' not found in table '{}'",
                 condition.column, table_name
@@ -115,7 +115,7 @@ fn handle_select(
                     match &record[condition_column_index] {
                         Value::Text(val) => {
                             if condition.operator == "=" {
-                                val == &condition.value // String comparison is case-sensitive
+                                val == &condition.value
                             } else {
                                 false
                             }
@@ -125,19 +125,16 @@ fn handle_select(
                                 if let Ok(cond_val_int) = condition.value.parse::<i64>() {
                                     *val_int == cond_val_int
                                 } else {
-                                    // If parsing condition value as int fails, try comparing as string if val_int can be stringified
-                                    // For this stage, we assume type consistency or direct string comparison for text.
-                                    // The challenge implies string comparison for `color = 'Yellow'`.
                                     false
                                 }
                             } else {
                                 false
                             }
                         }
-                        _ => false, // Other types not handled for WHERE in this stage
+                        _ => false,
                     }
                 } else {
-                    false // Record doesn't have the column
+                    false
                 }
             })
             .collect()
@@ -157,7 +154,7 @@ fn handle_select(
                     Value::Null => values_to_print.push("NULL".to_string()),
                 }
             } else {
-                values_to_print.push("".to_string()); // Should ideally not happen if column indices are correct
+                values_to_print.push("".to_string());
             }
         }
         println!("{}", values_to_print.join("|"));
