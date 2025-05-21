@@ -2,11 +2,10 @@ mod database;
 mod parser;
 mod record;
 
-use std::usize;
-
 use anyhow::{bail, Context, Result};
 use database::Database;
-use parser::{parse_query, QueryType};
+use parser::{parse_query, QueryType, WhereCondition};
+use record::Value;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -18,7 +17,7 @@ fn main() -> Result<()> {
     let db_path = &args[1];
     let command = &args[2];
 
-    if command.starts_with(".") {
+    if command.starts_with('.') {
         match command.as_str() {
             ".dbinfo" => handle_dbinfo(db_path),
             ".tables" => handle_tables(db_path),
@@ -26,90 +25,145 @@ fn main() -> Result<()> {
         }
     } else {
         match parse_query(command)? {
-            QueryType::Select { columns, table } => handle_select(db_path, &columns, &table),
+            QueryType::Select {
+                columns,
+                table,
+                where_clause,
+            } => handle_select(db_path, &columns, &table, where_clause),
             QueryType::SelectCount { table } => handle_count(db_path, &table),
-            _ => bail!("Unsupported SQL command: {}", command),
+            QueryType::Unknown => bail!("Unknown or unsupported SQL command: {}", command),
         }
     }
 }
 
-fn handle_select(db_path: &str, column_names: &[String], table_name: &str) -> Result<()> {
+fn get_table_column_names(sql_create_table: &str) -> Result<Vec<String>> {
+    let start_idx = sql_create_table
+        .find('(')
+        .context("Invalid CREATE TABLE syntax: missing '('")?;
+    let end_idx = sql_create_table
+        .rfind(')')
+        .context("Invalid CREATE TABLE syntax: missing ')'")?;
+
+    if start_idx >= end_idx {
+        bail!("Invalid CREATE TABLE syntax: '(' not before ')'");
+    }
+
+    let columns_str = &sql_create_table[start_idx + 1..end_idx];
+    Ok(columns_str
+        .split(',')
+        .map(|col_def| {
+            col_def
+                .trim()
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .collect())
+}
+
+fn handle_select(
+    db_path: &str,
+    requested_column_names: &[String],
+    table_name: &str,
+    where_clause: Option<WhereCondition>,
+) -> Result<()> {
     let mut db = Database::open(db_path)?;
+    let schema_entries = db.read_schema()?;
 
-    let schema = db.read_schema()?;
-
-    let table_entry = schema
+    let table_entry = schema_entries
         .iter()
         .find(|e| e.typ == "table" && e.tbl_name == table_name)
         .context(format!("Table '{}' not found", table_name))?;
 
-    let column_indices = column_names
+    let table_sql = table_entry.sql.as_ref().context(format!(
+        "No SQL definition found for table '{}'",
+        table_name
+    ))?;
+
+    let all_table_column_names = get_table_column_names(table_sql)?;
+
+    let output_column_indices = requested_column_names
         .iter()
-        .map(|col| get_column_index(&mut db, table_entry, col))
+        .map(|req_col_name| {
+            all_table_column_names
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case(req_col_name)) // Case-insensitive column name matching
+                .context(format!(
+                    "Column '{}' not found in table '{}'",
+                    req_col_name, table_name
+                ))
+        })
         .collect::<Result<Vec<usize>>>()?;
 
-    let records = db.read_table_records(table_entry.rootpage as usize)?;
+    let all_records = db.read_table_records(table_entry.rootpage as usize)?;
 
-    for record in records {
-        let mut values = Vec::new();
+    let filtered_records = if let Some(condition) = where_clause {
+        let condition_column_index = all_table_column_names
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(&condition.column)) // Case-insensitive
+            .context(format!(
+                "WHERE clause column '{}' not found in table '{}'",
+                condition.column, table_name
+            ))?;
 
-        for &index in &column_indices {
+        all_records
+            .into_iter()
+            .filter(|record| {
+                if condition_column_index < record.len() {
+                    match &record[condition_column_index] {
+                        Value::Text(val) => {
+                            if condition.operator == "=" {
+                                val == &condition.value // String comparison is case-sensitive
+                            } else {
+                                false
+                            }
+                        }
+                        Value::Int(val_int) => {
+                            if condition.operator == "=" {
+                                if let Ok(cond_val_int) = condition.value.parse::<i64>() {
+                                    *val_int == cond_val_int
+                                } else {
+                                    // If parsing condition value as int fails, try comparing as string if val_int can be stringified
+                                    // For this stage, we assume type consistency or direct string comparison for text.
+                                    // The challenge implies string comparison for `color = 'Yellow'`.
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false, // Other types not handled for WHERE in this stage
+                    }
+                } else {
+                    false // Record doesn't have the column
+                }
+            })
+            .collect()
+    } else {
+        all_records
+    };
+
+    for record in filtered_records {
+        let mut values_to_print = Vec::new();
+        for &index in &output_column_indices {
             if index < record.len() {
                 match &record[index] {
-                    record::Value::Text(value) => values.push(value.clone()),
-                    record::Value::Int(value) => values.push(value.to_string()),
-                    _ => {}
+                    Value::Text(value) => values_to_print.push(value.clone()),
+                    Value::Int(value) => values_to_print.push(value.to_string()),
+                    Value::Float(value) => values_to_print.push(value.to_string()),
+                    Value::Blob(_) => values_to_print.push("[BLOB]".to_string()),
+                    Value::Null => values_to_print.push("NULL".to_string()),
                 }
+            } else {
+                values_to_print.push("".to_string()); // Should ideally not happen if column indices are correct
             }
         }
-
-        println!("{}", values.join("|"));
+        println!("{}", values_to_print.join("|"));
     }
 
     Ok(())
-}
-
-fn get_column_index(
-    db: &mut Database,
-    table_entry: &database::SchemaEntry,
-    target_column: &str,
-) -> Result<usize> {
-    let schema = db.read_schema()?;
-
-    let sql_entry = schema
-        .iter()
-        .find(|e| e.typ == "table" && e.tbl_name == table_entry.tbl_name)
-        .context(format!(
-            "Table '{}' SQL definition not found",
-            table_entry.tbl_name
-        ))?;
-
-    let sql = match &sql_entry.sql {
-        Some(sql) => sql,
-        None => bail!(
-            "No SQL definition found for table '{}'",
-            table_entry.tbl_name
-        ),
-    };
-
-    let start_idx = sql.find('(').context("Invalid CREATE TABLE syntax")?;
-    let end_idx = sql.rfind(')').context("Invalid CREATE TABLE syntax")?;
-
-    let columns_str = &sql[start_idx + 1..end_idx];
-    let column_defs: Vec<&str> = columns_str.split(',').collect();
-
-    for (i, col_def) in column_defs.iter().enumerate() {
-        let col_name = col_def.trim().split_whitespace().next().unwrap_or("");
-        if col_name == target_column {
-            return Ok(i);
-        }
-    }
-
-    bail!(
-        "Column '{}' not found in table '{}'",
-        target_column,
-        table_entry.tbl_name
-    )
 }
 
 fn handle_dbinfo(db_path: &str) -> Result<()> {
@@ -120,7 +174,7 @@ fn handle_dbinfo(db_path: &str) -> Result<()> {
     let schema = db.read_schema()?;
 
     for entry in schema {
-        if entry.typ == "table" {
+        if entry.typ == "table" && !entry.tbl_name.starts_with("sqlite_") {
             num_tables += 1;
         }
     }
@@ -135,7 +189,7 @@ fn handle_tables(db_path: &str) -> Result<()> {
 
     let mut table_names = Vec::new();
     for entry in schema {
-        if entry.typ == "table" {
+        if entry.typ == "table" && !entry.tbl_name.starts_with("sqlite_") {
             table_names.push(entry.tbl_name);
         }
     }
@@ -153,13 +207,19 @@ fn handle_count(db_path: &str, table_name: &str) -> Result<()> {
         .find(|e| e.typ == "table" && e.tbl_name == table_name)
         .context(format!("Table '{}' not found", table_name))?;
 
-    let page_data = db.read_page(entry.rootpage as usize)?;
+    let records = db.read_table_records(entry.rootpage as usize)?;
+    println!("{}", records.len());
 
-    let header_offset = if entry.rootpage == 1 { 100 } else { 0 };
-
-    let cell_count =
-        u16::from_be_bytes([page_data[header_offset + 3], page_data[header_offset + 4]]) as usize;
-
-    println!("{}", cell_count);
+    // let page_data = db.read_page(entry.rootpage as usize)?;
+    // let header_offset = if entry.rootpage == 1 { 100 } else { 0 };
+    // let cell_count =
+    //     u16::from_be_bytes([page_data[header_offset + 3], page_data[header_offset + 4]]) as usize;
+    // println!("{}", cell_count);
     Ok(())
 }
+
+// fn get_column_index(
+//     db: &mut Database,
+//     table_entry: &database::SchemaEntry,
+//     target_column: &str,
+// ) -> Result<usize> { ... }
