@@ -11,6 +11,7 @@ pub enum Value {
 }
 
 pub fn read_varint(bytes: &[u8]) -> Result<(u64, &[u8], usize)> {
+
     let mut result: u64 = 0;
     let mut bytes_read: usize = 0;
 

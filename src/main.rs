@@ -100,52 +100,61 @@ fn handle_select(
         })
         .collect::<Result<Vec<usize>>>()?;
 
-    let all_records = db.read_table_records(table_entry.rootpage)?;
+    let records = if let Some(condition) = &where_clause {
+        if condition.column.eq_ignore_ascii_case("country") && condition.operator == "=" {
+            let index_entry = schema_entries
+                .iter()
+                .find(|e| e.typ == "index" && e.tbl_name == table_name)
+                .context("No index found for table")?;
 
-    let filtered_records = if let Some(condition) = where_clause {
-        let condition_column_index = all_table_column_names
-            .iter()
-            .position(|name| name.eq_ignore_ascii_case(&condition.column))
-            .context(format!(
-                "WHERE clause column '{}' not found in table '{}'",
-                condition.column, table_name
-            ))?;
+            let rowids = db.collect_index_rowids(index_entry.rootpage, &condition.value)?;
+            db.read_table_records_by_rowids(table_entry.rootpage, &rowids)?
+        } else {
+            let all_records = db.read_table_records(table_entry.rootpage)?;
+            let condition_column_index = all_table_column_names
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case(&condition.column))
+                .context(format!(
+                    "WHERE clause column '{}' not found in table '{}'",
+                    condition.column, table_name
+                ))?;
 
-        all_records
-            .into_iter()
-            .filter(|record| {
-                if condition_column_index < record.len() {
-                    match &record[condition_column_index] {
-                        Value::Text(val) => {
-                            if condition.operator == "=" {
-                                val == &condition.value
-                            } else {
-                                false
-                            }
-                        }
-                        Value::Int(val_int) => {
-                            if condition.operator == "=" {
-                                if let Ok(cond_val_int) = condition.value.parse::<i64>() {
-                                    *val_int == cond_val_int
+            all_records
+                .into_iter()
+                .filter(|record| {
+                    if condition_column_index < record.len() {
+                        match &record[condition_column_index] {
+                            Value::Text(val) => {
+                                if condition.operator == "=" {
+                                    val == &condition.value
                                 } else {
                                     false
                                 }
-                            } else {
-                                false
                             }
+                            Value::Int(val_int) => {
+                                if condition.operator == "=" {
+                                    if let Ok(cond_val_int) = condition.value.parse::<i64>() {
+                                        *val_int == cond_val_int
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            }
+                            _ => false,
                         }
-                        _ => false,
+                    } else {
+                        false
                     }
-                } else {
-                    false
-                }
-            })
-            .collect()
+                })
+                .collect()
+        }
     } else {
-        all_records
+        db.read_table_records(table_entry.rootpage)?
     };
 
-    for record in filtered_records {
+    for record in records {
         let mut values_to_print = Vec::new();
         for &index in &output_column_indices {
             if index < record.len() {
