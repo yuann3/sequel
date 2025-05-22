@@ -49,18 +49,21 @@ fn get_table_column_names(sql_create_table: &str) -> Result<Vec<String>> {
     }
 
     let columns_str = &sql_create_table[start_idx + 1..end_idx];
-    Ok(columns_str
-        .split(',')
-        .map(|col_def| {
-            col_def
-                .trim()
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string()
-        })
-        .filter(|s| !s.is_empty())
-        .collect())
+    let mut columns = vec!["id".to_string()];
+    columns.extend(
+        columns_str
+            .split(',')
+            .map(|col_def| {
+                col_def
+                    .trim()
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .filter(|s| !s.is_empty()),
+    );
+    Ok(columns)
 }
 
 fn handle_select(
@@ -97,7 +100,7 @@ fn handle_select(
         })
         .collect::<Result<Vec<usize>>>()?;
 
-    let all_records = db.read_table_records(table_entry.rootpage as usize)?;
+    let all_records = db.read_table_records(table_entry.rootpage)?;
 
     let filtered_records = if let Some(condition) = where_clause {
         let condition_column_index = all_table_column_names
@@ -204,19 +207,8 @@ fn handle_count(db_path: &str, table_name: &str) -> Result<()> {
         .find(|e| e.typ == "table" && e.tbl_name == table_name)
         .context(format!("Table '{}' not found", table_name))?;
 
-    let records = db.read_table_records(entry.rootpage as usize)?;
+    let records = db.read_table_records(entry.rootpage)?;
     println!("{}", records.len());
 
-    // let page_data = db.read_page(entry.rootpage as usize)?;
-    // let header_offset = if entry.rootpage == 1 { 100 } else { 0 };
-    // let cell_count =
-    //     u16::from_be_bytes([page_data[header_offset + 3], page_data[header_offset + 4]]) as usize;
-    // println!("{}", cell_count);
     Ok(())
 }
-
-// fn get_column_index(
-//     db: &mut Database,
-//     table_entry: &database::SchemaEntry,
-//     target_column: &str,
-// ) -> Result<usize> { ... }
