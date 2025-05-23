@@ -10,7 +10,7 @@ A no-bullshit, from-scratch SQLite parser and query engine clone written in Rust
   * `.tables`, `.dbinfo`
   * `SELECT ... FROM ...`
   * `SELECT COUNT(*) FROM ...`
-  * `WHERE country = '...’` (only basic equality for now, cuz no point doing it)
+  * `WHERE country = '...’` (only basic equality for now, cuz no point doing others)
 * Index optimization with B-tree traversal (yes, it’s fast af)
 
 ## Usage
