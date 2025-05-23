@@ -1,3 +1,5 @@
+![CleanShot 2025-05-23 at 10 59 17@2x](https://github.com/user-attachments/assets/03bba877-2e89-40b4-aa50-b0f4d153aefe)
+
 # sequel
 
 A no-bullshit, from-scratch SQLite parser and query engine clone written in Rust. We read raw `.db` files byte-by-byte, manually parse B-trees, and extract rows like it’s the Stone Age. It's part of the Codecrafters SQLite challenge, but with extra muscle and fewer excuses.
