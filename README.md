@@ -1,77 +1,39 @@
-[![progress-banner](https://backend.codecrafters.io/progress/sqlite/b15d086a-9b23-4cd6-8b79-22769efa8a72)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# sequel
 
-This is a starting point for Rust solutions to the
-["Build Your Own SQLite" Challenge](https://codecrafters.io/challenges/sqlite).
+A no-bullshit, from-scratch SQLite parser and query engine clone written in Rust. We read raw `.db` files byte-by-byte, manually parse B-trees, and extract rows like it’s the Stone Age. It's part of the Codecrafters SQLite challenge, but with extra muscle and fewer excuses.
 
-In this challenge, you'll build a barebones SQLite implementation that supports
-basic SQL queries like `SELECT`. Along the way we'll learn about
-[SQLite's file format](https://www.sqlite.org/fileformat.html), how indexed data
-is
-[stored in B-trees](https://jvns.ca/blog/2014/10/02/how-does-sqlite-work-part-2-btrees/)
-and more.
+## Features
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+* Parses SQLite DB files directly, no external libraries or bindings
+* Supports:
 
-# Passing the first stage
+  * `.tables`, `.dbinfo`
+  * `SELECT ... FROM ...`
+  * `SELECT COUNT(*) FROM ...`
+  * `WHERE country = '...’` (only basic equality for now, cuz no point doing it)
+* Index optimization with B-tree traversal (yes, it’s fast af)
 
-The entry point for your SQLite implementation is in `src/main.rs`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
+## Usage
 
 ```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
+./run.sh path/to/db "SELECT name, country FROM companies WHERE country = 'Japan'"
 ```
 
-Time to move on to the next stage!
-
-# Stage 2 & beyond
-
-Note: This section is for stages 2 and beyond.
-
-1. Ensure you have `cargo (1.85)` installed locally
-1. Run `./your_program.sh` to run your program, which is implemented in
-   `src/main.rs`. This command compiles your Rust project, so it might be slow
-   the first time you run it. Subsequent runs will be fast.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
-
-# Sample Databases
-
-To make it easy to test queries locally, we've added a sample database in the
-root of this repository: `sample.db`.
-
-This contains two tables: `apples` & `oranges`. You can use this to test your
-implementation for the first 6 stages.
-
-You can explore this database by running queries against it like this:
+or
 
 ```sh
-$ sqlite3 sample.db "select id, name from apples"
-1|Granny Smith
-2|Fuji
-3|Honeycrisp
-4|Golden Delicious
+./run.sh path/to/db ".tables"
 ```
 
-There are two other databases that you can use:
+## Why
 
-1. `superheroes.db`:
-   - This is a small version of the test database used in the table-scan stage.
-   - It contains one table: `superheroes`.
-   - It is ~1MB in size.
-1. `companies.db`:
-   - This is a small version of the test database used in the index-scan stage.
-   - It contains one table: `companies`, and one index: `idx_companies_country`
-   - It is ~7MB in size.
+Part of "Rewrite everything in Rust" Movement. and real devs read hex dumps and parse varints manually, and I want to get my hands dirty with raw file I/O and binary parsing
 
-These aren't included in the repository because they're large in size. You can
-download them by running this script:
+## File Structure
 
-```sh
-./download_sample_databases.sh
-```
+Check `src/` — it's clean, modular, and doesn’t hide logic under 10 layers of traits and async shit.
 
-If the script doesn't work for some reason, you can download the databases
-directly from
-[codecrafters-io/sample-sqlite-databases](https://github.com/codecrafters-io/sample-sqlite-databases).
+## License
+
+fork it, rage-quit halfway through. Up to you.
+
